@@ -392,7 +392,6 @@ class PanelPalettePage(wx.Panel, BasePalettePage):
     def addButton(self, widgetName, wxClass, constrClass, clickEvt, hintFunc, 
                   hintLeaveFunc, btnType):
         mID = wx.NewId()
-
         self.menu.Append(mID, widgetName, '', self.menusCheckable)
         self.palette.Bind(wx.EVT_MENU, clickEvt, id=mID)
 
@@ -456,8 +455,9 @@ class NewPalettePage(PanelPalettePage):
 
     def OnClickTrap(self, event):
         modPageInfo = self.widgets[event.GetId()]
-        wx.CallAfter(self.palette.OnCreateNew, name=modPageInfo[0], 
-              controller=modPageInfo[1])
+        self.palette.OnCreateNew(name=modPageInfo[0],controller=modPageInfo[1])
+        #wx.CallAfter(self.palette.OnCreateNew, name=modPageInfo[0],
+        #      controller=modPageInfo[1])
 
 class PalettePage(PanelPalettePage):
     def __init__(self, parent, name, bitmapPath, eventOwner, widgets, 
@@ -476,6 +476,7 @@ class PalettePage(PanelPalettePage):
 
     def OnClickTrap(self, event):
         wId = event.GetId()
+
         if self.palette.paletteStyle == 'tabs':
             obj = event.GetButtonObj()
             if obj.up:
