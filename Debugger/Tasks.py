@@ -1,7 +1,5 @@
 import threading
 
-PRINT_TRACEBACKS = 0
-
 class ThreadedTaskHandler:
     '''Rather than creating a new thread for each task, reuses existing
     threads for speed.
@@ -69,21 +67,19 @@ class ThreadedTaskHandler:
                 cond.release()
 
             if task is not None:
-                #print 'performing task: %s(%s, %s)'%(task, args, kw)
                 try:
                     if kw is not None:
-                        task(*args, **kw)
+                        apply(task, args, kw)
                     else:
-                        task(*args)
+                        apply(task, args)
                 except SystemExit:
                     exit_loop = 1
                     self.running_threads = self.running_threads - 1
                 except:
-                    if PRINT_TRACEBACKS:
-                        # The task ought to do its own error handling,
-                        # but sometimes it doesn't.
-                        import traceback
-                        traceback.print_exc()
+                    # The task ought to do its own error handling,
+                    # but sometimes it doesn't.
+                    import traceback
+                    traceback.print_exc()
 
 
 if __name__ == '__main__':

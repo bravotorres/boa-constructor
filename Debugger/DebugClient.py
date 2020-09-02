@@ -1,8 +1,7 @@
-import sys
-
+import string, sys
+from string import rfind
 from Tasks import ThreadedTaskHandler
-
-import wx
+from wxPython.wx import NewId, wxPyCommandEvent
 
 '''wxPython debugging client code.  This runs in the IDE.
 A debug client connects to a debug server, generally in a different
@@ -10,32 +9,34 @@ process.  The debug server does the dirty work of stepping and
 stopping at breakpoints.
 '''
 
-wxEVT_DEBUGGER_OK = wx.NewId()
-wxEVT_DEBUGGER_EXC = wx.NewId()
-wxEVT_DEBUGGER_START = wx.NewId()
-wxEVT_DEBUGGER_STOPPED = wx.NewId()
+wxEVT_DEBUGGER_OK = NewId()
+wxEVT_DEBUGGER_EXC = NewId()
+wxEVT_DEBUGGER_START = NewId()
+wxEVT_DEBUGGER_STOPPED = NewId()
 
-EVT_DEBUGGER_OK = wx.PyEventBinder(wxEVT_DEBUGGER_OK)
-EVT_DEBUGGER_EXC = wx.PyEventBinder(wxEVT_DEBUGGER_EXC)
-EVT_DEBUGGER_START = wx.PyEventBinder(wxEVT_DEBUGGER_START)
-EVT_DEBUGGER_STOPPED = wx.PyEventBinder(wxEVT_DEBUGGER_STOPPED)
+def EVT_DEBUGGER_OK(win, id, func):
+    win.Connect(id, -1, wxEVT_DEBUGGER_OK, func)
+
+def EVT_DEBUGGER_EXC(win, id, func):
+    win.Connect(id, -1, wxEVT_DEBUGGER_EXC, func)
+
+def EVT_DEBUGGER_START(win, id, func):
+    win.Connect(id, -1, wxEVT_DEBUGGER_START, func)
+
+def EVT_DEBUGGER_STOPPED(win, id, func):
+    win.Connect(id, -1, wxEVT_DEBUGGER_STOPPED, func)
 
 
-class EmptyResponseError (Exception):
-    """Empty debugger response"""
-
-
-class DebuggerCommEvent(wx.PyCommandEvent):
+class DebuggerCommEvent(wxPyCommandEvent):
     receiver_name = None
     receiver_args = ()
     result = None
     task = None
     t = None
     v = None
-    tb = ('', 0)
 
     def __init__(self, evtType, id):
-        wx.PyCommandEvent.__init__(self, evtType, id)
+        wxPyCommandEvent.__init__(self, evtType, id)
 
     def SetResult(self, result):
         self.result = result
@@ -83,19 +84,13 @@ class DebugClient:
         """Terminates the debugger."""
         raise NotImplementedError
 
-    def getProcessId(self):
-        """Returns the process ID if this client is connected to another
-        process."""
-        return 0
-
     def createEvent(self, typ):
         """Creates an event."""
         return DebuggerCommEvent(typ, self.win_id)
 
     def postEvent(self, evt):
         """Adds an event to the event queue."""
-        if self.event_handler:
-            self.event_handler.AddPendingEvent(evt)
+        self.event_handler.AddPendingEvent(evt)
 
     def pollStreams(self):
         """Returns the data sent to stdout and stderr."""
@@ -111,10 +106,6 @@ class DebuggerTask:
         self.m_args = m_args
         self.r_name = r_name
         self.r_args = r_args
-
-    def __repr__(self):
-        return '<DebuggerTask: %s:%s:%s:%s>'%(self.m_name, self.m_args,
-                                              self.r_name, self.r_args)
 
     def __call__(self):
         evt = None

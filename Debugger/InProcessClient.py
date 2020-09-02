@@ -1,7 +1,8 @@
-import sys
 from DebugClient import DebugClient, DebuggerCommEvent, \
      wxEVT_DEBUGGER_OK, wxEVT_DEBUGGER_EXC
-from IsolatedDebugger import NonBlockingDebuggerConnection, DebuggerController
+from IsolatedDebugger import NonBlockingDebuggerConnection, \
+     DebuggerController
+##from PhonyApp import wxPhonyApp
 
 
 class InProcessCallback:
@@ -40,7 +41,7 @@ class InProcessClient (DebugClient):
             self.event_handler, self.win_id, r_name, r_args)
         conn.setCallback(cb)
         try:
-            getattr(conn, m_name)(*m_args)
+            apply(getattr(conn, m_name), m_args)
         except:
             cb.notifyException()
 

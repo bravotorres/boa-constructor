@@ -1,22 +1,10 @@
-import os, sys, time, socket
-import wx
-
-import Preferences, Utils
-from Utils import _
-
-try:
-    from ExternalLib import xmlrpclib
-except ImportError:
-    import xmlrpclib
-
-from DebugClient import DebugClient, MultiThreadedDebugClient, \
-     EmptyResponseError, DebuggerTask, EVT_DEBUGGER_START, \
-     wxEVT_DEBUGGER_START, wxEVT_DEBUGGER_EXC, wxEVT_DEBUGGER_STOPPED
+import os, string, sys, time, socket
+from ExternalLib import xmlrpclib
+from wxPython import wx
 
 
 KEEP_STREAMS_OPEN = 1
 USE_TCPWATCH = 0
-LOG_TRACEBACKS = 0
 
 
 class TransportWithAuth (xmlrpclib.Transport):
@@ -30,52 +18,18 @@ class TransportWithAuth (xmlrpclib.Transport):
         xmlrpclib.Transport.send_user_agent(self, connection)
         connection.putheader("X-Auth", self._auth)
 
-    def parse_response(self, f, sock=None):
-        # read response from input file, and parse it
-        # If there was no response, raise a special exception.
-        got_data = 0
 
-        p, u = self.getparser()
-
-        while 1:
-            if sock:
-                response = sock.recv(1024)
-            else:
-                response = f.read(1024)
-            if not response:
-                break
-            else:
-                got_data = 1
-            if self.verbose:
-                print "body:", repr(response)
-            p.feed(response)
-
-        f.close()
-        if not got_data:
-            raise EmptyResponseError, _('Empty response from debugger process')
-
-        p.close()
-        return u.close()
-
-class UnknownError(Exception):
-    pass
-
-def spawnChild(monitor, process, args=''):
+def spawnChild(monitor, process):
     """Returns an xmlrpclib.Server, a connection to an xml-rpc server,
     and the input and error streams.
     """
     # Start ChildProcessServerStart.py in a new process.
-    if hasattr(sys, 'frozen'):
-        script_fn = os.path.join(os.path.dirname(sys.executable), 'Debugger', 
-              'ChildProcessServerStart.py')
-    else:
-        script_fn = os.path.join(os.path.dirname(__file__),
+    script_fn = os.path.join(os.path.dirname(__file__),
                              'ChildProcessServerStart.py')
-    pyIntpPath = Preferences.getPythonInterpreterPath()
-    cmd = '%s "%s" %s' % (pyIntpPath, script_fn, args)
+    os.environ['PYTHONPATH'] = string.join(sys.path, os.pathsep)
+    cmd = '%s "%s"' % (sys.executable, script_fn)
     try:
-        pid = wx.Execute(cmd, wx.EXEC_NOHIDE, process)
-
+        pid = wx.wxExecute(cmd, 0, process)
         line = ''
         if monitor.isAlive():
             istream = process.GetInputStream()
@@ -83,71 +37,50 @@ def spawnChild(monitor, process, args=''):
 
             err = ''
             # read in the port and auth hash
-            while monitor.isAlive() and line.find('\n') < 0:
+            while monitor.isAlive() and string.find(line, '\n') < 0:
                 # don't take more time than the process we wait for ;)
                 time.sleep(0.00001)
-                if istream.CanRead():
+                if not istream.eof():
                     line = line + istream.read(1)
-                # test for tracebacks on stderr
-                if estream.CanRead():
+                if not estream.eof():
                     err = estream.read()
-                    if LOG_TRACEBACKS:
-                        if hasattr(sys, 'frozen'):
-                            fn = os.path.join(os.path.dirname(sys.executable), 'DebugTracebacks.txt')
-                        else:
-                            fn = os.path.join(os.path.dirname(__file__), 'DebugTracebacks.txt')
-                        open(fn, 'a').write(err)
-                    errlines = err.split('\n')
-                    while not errlines[-1].strip(): del errlines[-1]
-                    try:
-                        exctype, excvalue = errlines[-1].split(':')
-                    except ValueError:
-                        # XXX non standard output on stderr
-                        # XXX possibly warnings
-                        # XXX for now ignore it (it's non fatal)
-                        
-                        #raise UnknownError, errlines[-1]
-                        continue
-                        
+                    errlines = string.split(err, '\n')
+                    while not string.strip(errlines[-1]): del errlines[-1]
+                    exctype, excvalue = string.split(errlines[-1], ':')
                     while errlines and errlines[-1][:7] != '  File ':
                         del errlines[-1]
                     if errlines:
-                        errfile = ' (%s)' % errlines[-1].strip()
+                        errfile = ' (%s)' % string.strip(errlines[-1])
                     else:
                         errfile = ''
-                    try:
-                        Error, val = __builtins__[exctype.strip()], (excvalue.strip()+errfile)
-                    except KeyError:
-                        Error, val = UnknownError, (exctype.strip()+':'+excvalue.strip()+errfile)
-                    raise Error, val
+                    raise __builtins__[string.strip(exctype)], (
+                        string.strip(excvalue)+errfile)
 
         if not KEEP_STREAMS_OPEN:
             process.CloseOutput()
 
         if monitor.isAlive():
-            line = line.strip()
+            line = string.strip(line)
             if not line:
                 raise RuntimeError, (
-                    _('The debug server address could not be read'))
-            port, auth = line.strip().split()
+                    'The debug server address could not be read')
+            port, auth = string.split(string.strip(line))
 
             if USE_TCPWATCH:
                 # Start TCPWatch as a connection forwarder.
                 from thread import start_new_thread
-                new_port = 20202  # Hopefully free
-                def run_tcpwatch(port1, port2):
-                    os.system("tcpwatch -L %d:127.0.0.1:%d" % (
-                        int(port1), int(port2)))
-                start_new_thread(run_tcpwatch, (new_port, port))
-                time.sleep(3)
-                port = new_port
+                def run_tcpwatch(port):
+                    os.system("tcpwatch -L9100:%d" % int(port))
+                start_new_thread(run_tcpwatch, (port,))
+                time.sleep(1)
+                port = 9100
 
             trans = TransportWithAuth(auth)
             server = xmlrpclib.Server(
                 'http://127.0.0.1:%d' % int(port), trans)
-            return server, istream, estream, pid, pyIntpPath
+            return server, istream, estream
         else:
-            raise RuntimeError, _('The debug server failed to start')
+            raise RuntimeError, 'The debug server failed to start'
     except:
         if monitor.isAlive():
             process.CloseOutput()
@@ -158,19 +91,21 @@ def spawnChild(monitor, process, args=''):
 ###################################################################
 
 
+from DebugClient import DebugClient, MultiThreadedDebugClient, \
+     DebuggerTask, wxEVT_DEBUGGER_EXC, wxEVT_DEBUGGER_START, \
+     wxEVT_DEBUGGER_STOPPED, EVT_DEBUGGER_START
+
+
 class ChildProcessClient(MultiThreadedDebugClient):
 
-    server = None       # An xmlrpclib.Server instance
-    processId = 0
-    process = None      # A wx.Process
+    server = None
+    process = None
     input_stream = None
     error_stream = None
-    pyIntpPath = None
-    
-    def __init__(self, win, process_args=''):
-        self.process_args = process_args
+
+    def __init__(self, win):
         DebugClient.__init__(self, win)
-        win.Bind(EVT_DEBUGGER_START, self.OnDebuggerStart, id=self.win_id)
+        EVT_DEBUGGER_START(win, self.win_id, self.OnDebuggerStart)
 
     def invokeOnServer(self, m_name, m_args=(), r_name=None, r_args=()):
         task = DebuggerTask(self, m_name, m_args, r_name, r_args)
@@ -185,7 +120,7 @@ class ChildProcessClient(MultiThreadedDebugClient):
 
     def invoke(self, m_name, m_args):
         m = getattr(self.server, m_name)
-        result = m(*m_args)
+        result = apply(m, m_args)
         return result
 
     def isAlive(self):
@@ -194,14 +129,12 @@ class ChildProcessClient(MultiThreadedDebugClient):
     def kill(self):
         server = self.server
         if server is not None:
-            def call_exit(server=server):
-                try:
-                    server.exit_debugger()
-                except (EmptyResponseError, socket.error):
-                    # Already stopped.
-                    pass
-            self.taskHandler.addTask(call_exit)
             self.server = None
+            try:
+                server.exit_debugger()
+            except socket.error, err:
+                pass # server is already shut down
+            server = None
         self.input_stream = None
         self.error_stream = None
         process = self.process
@@ -211,65 +144,51 @@ class ChildProcessClient(MultiThreadedDebugClient):
             if KEEP_STREAMS_OPEN:
                 process.CloseOutput()
 
-##    def __del__(self):
-##        pass#self.kill()
+    def __del__(self):
+        self.kill()
 
     def pollStreams(self):
-        stderr_text = ''
-        stream = self.error_stream
-        if stream is not None and stream.CanRead():
-            stderr_text = stream.read()
         stdin_text = ''
+        stderr_text = ''
         stream = self.input_stream
-        if stream is not None and stream.CanRead():
+        if stream is not None and not stream.eof():
             stdin_text = stream.read()
-        
+        stream = self.error_stream
+        if stream is not None and not stream.eof():
+            stderr_text = stream.read()
         return (stdin_text, stderr_text)
-
-    def getProcessId(self):
-        """Returns the process ID if this client is connected to another
-        process."""
-        return self.processId
 
     def OnDebuggerStart(self, evt):
         try:
-            wx.BeginBusyCursor()
+            wx.wxBeginBusyCursor()
             try:
                 if self.server is None:
                     # Start the subprocess.
-                    process = wx.Process(self.event_handler, self.win_id)
+                    process = wx.wxProcess(self.event_handler, self.win_id)
                     process.Redirect()
                     self.process = process
                     wx.EVT_END_PROCESS(self.event_handler, self.win_id,
                                        self.OnProcessEnded)
-                    (self.server, self.input_stream, self.error_stream,
-                     self.processId, self.pyIntpPath) = spawnChild(
-                        self, process, self.process_args)
+                    self.server, self.input_stream, self.error_stream = \
+                                 spawnChild(self, process)
                 self.taskHandler.addTask(evt.GetTask())
             except:
-                t, v, tb = sys.exc_info()
+                t, v = sys.exc_info()[:2]
                 evt = self.createEvent(wxEVT_DEBUGGER_EXC)
                 evt.SetExc(t, v)
                 self.postEvent(evt)
-                if LOG_TRACEBACKS:
-                    import traceback
-                    fn = os.path.join(os.path.dirname(__file__), 'DebugTracebacks.txt')
-                    open(fn, 'a').write(''.join(traceback.format_exception(t, v, tb)))
-                del tb
         finally:
-            wx.EndBusyCursor()
+            wx.wxEndBusyCursor()
 
     def OnProcessEnded(self, evt):
         self.pollStreams()
-        self.server = None
         self.kill()
         evt = self.createEvent(wxEVT_DEBUGGER_STOPPED)
         self.postEvent(evt)
 
-
 if __name__ == '__main__':
-    a = wx.PySimpleApp()
-    f = wx.Frame(None, -1, '')
+    a = wx.wxPySimpleApp()
+    f = wx.wxFrame(None, -1, '')
     f.Show()
     cpc = ChildProcessClient(f)
     cpc.OnDebuggerStart(None)

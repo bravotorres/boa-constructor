@@ -1,28 +1,33 @@
+
 import sys, os, time
-import random, sha, threading
+import whrandom, sha, threading
 from time import sleep
 from SocketServer import TCPServer
 
 from IsolatedDebugger import DebugServer, DebuggerConnection
 from Tasks import ThreadedTaskHandler
 
-# The process uses the Debugger dir as the main script dir
-# here we add the boa root so that Boa modules can be imported.
-boa_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-if boa_root not in sys.path:
-    sys.path.insert(0, boa_root)
 
 try:
     from ExternalLib.xmlrpcserver import RequestHandler
+except:
+    # Add parent directory to the path search.
+    sys.path[0:0] = [os.pardir]
+    from ExternalLib.xmlrpcserver import RequestHandler
+
+try:
+    from cStringIO import StringIO
 except ImportError:
-    from xmlrpcserver import RequestHandler
+    from StringIO import StringIO
 
-serving = 1
 
-debug_server = None
-connection = None
-auth_str = ''
+serving = 0
+
+debug_server = DebugServer()
+connection = DebuggerConnection(debug_server)
+connection.allowEnvChanges()  # Allow changing of sys.path, etc.
 task_handler = ThreadedTaskHandler()
+auth_str = ''
 
 
 class DebugRequestHandler (RequestHandler):
@@ -31,7 +36,7 @@ class DebugRequestHandler (RequestHandler):
         h = self.headers
         if auth_str and (not h.has_key('x-auth')
                          or h['x-auth'] != auth_str):
-            raise Exception, 'Unauthorized: X-Auth header missing or incorrect'
+            raise 'Unauthorized', 'X-Auth header missing or incorrect'
 
     def call(self, method, params):
         # Override of xmlrpcserver.RequestHandler.call()
@@ -42,7 +47,7 @@ class DebugRequestHandler (RequestHandler):
             return 1
         else:
             m = getattr(connection, method)
-            result = m(*params)
+            result = apply(m, params)
             if result is None:
                 result = 0
             return result
@@ -69,36 +74,17 @@ def streamFlushThread():
         sleep(0.15)  # 150 ms
 
 
-def main(args=None):
-    global auth_str, debug_server, connection, serving
-
-    # Create the debug server.
-    if args is None:
-        args = sys.argv[1:]
-    if args and '--zope' in args:
-        from ZopeScriptDebugServer import ZopeScriptDebugServer
-        debug_server = ZopeScriptDebugServer()
-    else:
-        debug_server = DebugServer()
-    connection = DebuggerConnection(debug_server)
-    connection.allowEnvChanges()  # Allow changing of sys.path, etc.
-
+def main():
     # Create an authentication string, always 40 characters.
-    auth_str = sha.new(str(random.random())).hexdigest()
+    global auth_str
+    auth_str = sha.new(str(whrandom.random())).hexdigest()
 
     # port is 0 to allocate any port.
     server = TaskingTCPServer(('', 0), DebugRequestHandler)
     port = int(server.socket.getsockname()[1])
-
     # Tell the client what port to connect to and the auth string to send.
     sys.stdout.write('%010d %s%s' % (port, auth_str, os.linesep))
     sys.stdout.flush()
-
-    # Provide a hard breakpoint hook.  Use it like this:
-    # if hasattr(sys, 'breakpoint'): sys.breakpoint()
-    sys.breakpoint = debug_server.set_trace
-    sys.debugger_control = debug_server
-    sys.boa_debugger = debug_server
 
     def serve_forever(server):
         while 1:
@@ -117,8 +103,9 @@ def main(args=None):
     #print 'serving until stdin returns EOF'
     #sys.stdin.read()
 
+    global serving; serving = 1
     while serving:
-        time.sleep(0.1)
+        time.sleep(0.01)
 
     sys.exit(0)
 

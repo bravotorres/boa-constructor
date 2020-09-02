@@ -1,16 +1,3 @@
-#----------------------------------------------------------------------------
-# Name:         IsolatedDebugger.py
-# Purpose:      A Bdb-based debugger (tracer) that can be operated by
-#               another process
-#
-# Authors:      Shane Hathaway, Riaan Booysen
-#
-# Created:      November 2000
-# RCS-ID:       $Id$
-# Copyright:    (c) 2000 - 2007 : Shane Hathaway, Riaan Booysen
-# Licence:      GPL
-#----------------------------------------------------------------------------
-
 import sys, thread, threading, Queue
 import pprint
 from os import chdir
@@ -18,20 +5,14 @@ from os import path
 import bdb
 from bdb import Bdb, BdbQuit, Breakpoint
 from repr import Repr
-from types import TupleType
 
-
-# XXX Extend breakpoints to break on exception (like conditional breakpoints)
-
-__traceable__ = 0      # Never trace the tracer.
-bdb.__traceable__ = 0
+try: from cStringIO import StringIO
+except: from StringIO import StringIO
 
 
 class DebugError(Exception):
     """Incorrect operation of the debugger"""
-
-class BreakpointError(DebugError):
-    """Incorrect operation on a breakpoint"""
+    pass
 
 
 class DebuggerConnection:
@@ -55,7 +36,13 @@ class DebuggerConnection:
         res = sm.getResult()
         return res
 
-    ### Non-blocking calls.
+    def _getStdoutBuf(self):
+        return self._ds.stdoutbuf
+
+    def _getStderrBuf(self):
+        return self._ds.stderrbuf
+
+    ### Low-level calls.
 
     def allowEnvChanges(self, allow=1):
         """Allows the debugger to set sys.path, sys.argv, and
@@ -75,11 +62,6 @@ class DebuggerConnection:
         rather than stop.  Non-blocking.
         """
         self._callNoWait('runFile', 1, filename, params, autocont, add_paths)
-    
-    def post_mortem(self):
-        """ Inspecting tracebacks in the debugger 
-        """
-        self._callMethod('post_mortem', 0)
 
     def set_continue(self, full_speed=0):
         """Proceeds until a breakpoint or program stop.
@@ -102,26 +84,18 @@ class DebuggerConnection:
         or above.  Non-blocking."""
         self._callNoWait('set_step_over', 1)
 
-    def set_step_jump(self, lineno):
-        """Updates the lineno of the bottom frame.  Non-blocking."""
-        self._callMethod('set_step_jump', 0, lineno)
-    
     def set_pause(self):
         """Stops as soon as possible.  Non-blocking and immediate.
         """
         self._ds.stopAnywhere()
 
     def set_quit(self):
-        """Attempts to quits debugging, executing only the try/finally
-        handlers.  Non-blocking.
+        """Quits debugging, executing only the try/finally handlers.
+        Non-blocking and immediate.
         """
-        self._callNoWait('set_quit', 1)
-
-    def set_disconnect(self):
-        """Raises a BdbQuit exception in the current thread then
-        allows other threads to continue.  Non-blocking.
-        """
-        self._callNoWait('set_disconnect', 1)
+        self._ds.stopAnywhere()
+        if self._ds.isRunning():
+            self._callNoWait('set_quit', 1)
 
     def setAllBreakpoints(self, brks):
         """brks is a list of mappings containing the keys:
@@ -130,11 +104,11 @@ class DebuggerConnection:
         self._ds.setAllBreakpoints(brks)
 
     def addBreakpoint(self, filename, lineno, temporary=0,
-                      cond='', enabled=1, ignore=0):
+                      cond=None, enabled=1):
         """Sets a breakpoint.  Non-blocking and immediate.
         """
-        self._ds.addBreakpoint(filename, lineno, temporary,
-                               cond, enabled, ignore)
+        self._ds.addBreakpoint(filename, lineno, temporary, cond,
+                               enabled)
 
     def enableBreakpoints(self, filename, lineno, enabled=1):
         """Sets the enabled flag for all breakpoints on a given line.
@@ -142,30 +116,10 @@ class DebuggerConnection:
         """
         self._ds.enableBreakpoints(filename, lineno, enabled)
 
-    def ignoreBreakpoints(self, filename, lineno, ignore=0):
-        """Sets the ignore flag for all breakpoints on a given line.
-        Non-blocking and immediate.
-        """
-        self._ds.ignoreBreakpoints(filename, lineno, ignore)
-
-    def conditionalBreakpoints(self, filename, lineno, cond=''):
-        """Sets the break condition for all breakpoints on a given line.
-        Non-blocking.
-        """
-        self._ds.conditionalBreakpoints(filename, lineno, cond)
-
     def clearBreakpoints(self, filename, lineno):
-        """Clears all breakpoints on a line.
-        Non-blocking and immediate.
+        """Clears all breakpoints on a line.  Non-blocking and immediate.
         """
         self._ds.clearBreakpoints(filename, lineno)
-
-    def adjustBreakpoints(self, filename, lineno, delta):
-        """Moves all applicable breakpoints when delta lines are added or
-        deleted.
-        Non-blocking and immediate.
-        """
-        self._ds.adjustBreakpoints(filename, lineno, delta)
 
     ### Blocking methods.
 
@@ -186,18 +140,17 @@ class DebuggerConnection:
         """
         return self._callMethod('getStatusSummary', 0)
 
-    def proceedAndRequestStatus(self, command, temp_breakpoint=0, args=()):
+    def proceedAndRequestStatus(self, command, temp_breakpoint=0):
         """Executes one non-blocking command then returns
         getStatusSummary().  Blocking."""
         if temp_breakpoint:
             self.addBreakpoint(temp_breakpoint[0], temp_breakpoint[1], 1)
         if command:
             allowed = ('set_continue', 'set_step', 'set_step_over',
-                       'set_step_out', 'set_pause', 'set_quit',
-                       'set_disconnect', 'set_step_jump')
+                       'set_step_out', 'set_pause', 'set_quit')
             if command not in allowed:
                 raise DebugError('Illegal command: %s' % command)
-            getattr(self, command)(*args)
+            getattr(self, command)()
         ss = self.getStatusSummary()
         return ss
 
@@ -215,8 +168,6 @@ class DebuggerConnection:
         self.setAllBreakpoints(breaks)
         if autocont:
             self.set_continue()
-        else:
-            self._ds.set_step()
         return self.getStatusSummary()
 
     def getSafeDict(self, locals, frameno):
@@ -236,10 +187,6 @@ class DebuggerConnection:
         available through the given watch expression.  Blocking."""
         return self._callMethod('getWatchSubobjects', 0, expr, frameno)
 
-##    def updateBottomOfStackCodeObject(self, code):
-##        """ Experimental
-##        """
-##        return self._callMethod('updateBottomOfStackCodeObject', 0, code)
 
 class NonBlockingDebuggerConnection (DebuggerConnection):
     """Modifies call semantics in such a way that even blocking
@@ -345,7 +292,8 @@ class MethodCall (ServerMessage):
 
     def execute(self, ob):
         try:
-            result = getattr(ob, self.func_name)(*self.args, **self.kw)
+            result = apply(getattr(ob, self.func_name), self.args,
+                           self.kw)
         except (SystemExit, BdbQuit):
             raise
         except:
@@ -385,118 +333,64 @@ class MethodCall (ServerMessage):
             raise DebugError, 'Timed out while waiting for debug server.'
         return self.result
 
-
-
-class ThreadChoiceLock:
-    """A reentrant lock designed for simply choosing a thread.
-    It is always released when you call release()."""
-
-    def __init__(self):
-        self._owner = None
-        self._block = thread.allocate_lock()
-
-    def acquire(self, blocking=1):
-        me = thread.get_ident()
-        if self._owner == me:
-            return 1
-        rc = self._block.acquire(blocking)
-        if rc:
-            self._owner = me
-        return rc
-
-    def release(self):
-        me = thread.get_ident()
-        assert me == self._owner, "release of unacquired lock"
-        self._owner = None
-        self._block.release()
-
-    def releaseIfOwned(self):
-        me = thread.get_ident()
-        if me == self._owner:
-            self.release()
-
-
 _orig_syspath = sys.path
+
 
 class DebugServer (Bdb):
 
-    # frame is set only while paused.
     frame = None
-
-    # exc_info is set only while paused and an exception occurred.
     exc_info = None
-
-    # starting_trace is set to make sure sys.set_trace() gets called before
-    # resuming user code.
-    starting_trace = 0
-
-    # ignore_stopline is the line number we should *not* stop on.
-    ignore_stopline = -1
-
-    # autocont is set by runFile() if the debugger should enter set_continue
-    # mode right after starting.
+    max_string_len = 250
+    ignore_stopline = -1  # The line number we should *not* stop on.
     autocont = 0
-
-    # _allow_env_changes governs whether sys.path, etc. can be modified.
     _allow_env_changes = 0
-
-    # quitting is set to true when the user clicks the stop button.
+    stop_in_botframe = 0
     quitting = 0
-
-    # stopframe can hold several values:
-    #   None: Stop anywhere
-    #   frame object: Stop in that frame
-    #   (): Stop nowhere
 
     def __init__(self):
         Bdb.__init__(self)
         self.fncache = {}
-        self.botframe = None
 
         self.__queue = Queue.Queue(0)
 
-        # self._lock governs which thread the debugger will stop in.
-        self._lock = ThreadChoiceLock()
-
         self.repr = repr = Repr()
-        repr.maxstring = 100
-        repr.maxother = 100
+        repr.maxstring = 60
+        repr.maxother = 60
         self.maxdict2 = 1000
 
         self._running = 0
-        self.cleanupServer()
-        self.stopframe = ()  # Don't stop unless requested to do so.
+        self.stdoutbuf = StringIO()
+        self.stderrbuf = StringIO()
 
     def queueServerMessage(self, sm):
         self.__queue.put(sm)
+        global waiting_debug_server
+        waiting_debug_server = self
 
     def cleanupServer(self):
         self.reset()
-        self.frame = None
         self.ignore_stopline = -1
         self.autocont = 0
+        self.frame = None
         self.exc_info = None
-        self.starting_trace = 0
         self.fncache.clear()
-        self._lock.releaseIfOwned()
 
     def servicerThread(self):
-        """Bootstraps the debugger server loop."""
         while 1:
             try:
-                self.eventLoop()
+                self.serverLoop()
             except:
                 # ??
                 import traceback
                 traceback.print_exc()
             self.quitting = 0
 
-    def eventLoop(self):
+    def serverLoop(self):
         while not self.quitting:
-            if not self.executeOneEvent():
-                break  # event requested a return
+            if not self.oneServerLoop():
+                break
 
-    def executeOneEvent(self):
+    def oneServerLoop(self):
         # The heart of this whole mess.  Fetches a message and executes
         # it in the current frame.
         # Should not catch exceptions.
@@ -506,223 +400,106 @@ class DebugServer (Bdb):
         if sm.doExit():
             thread.exit()
         if sm.doReturn():
-            # Return to user code
-            self.beforeResume()
-            if self.starting_trace:
-                self.starting_trace = 0
-                sys.settrace(self.trace_dispatch)
             return 0
         return 1
-
-    def beforeResume(self):
-        """Frees references before jumping back into user code."""
-        self.frame = None
-        self.exc_info = None
 
     # Bdb overrides.
     def canonic(self, filename):
         canonic = self.fncache.get(filename, None)
         if not canonic:
-            if ((filename[:1] == '<' and filename[-1:] == '>') or
-                filename.find('://') >= 0):
-                # Don't change URLs or special filenames
+            if filename[:1] == '<' and filename[-1:] == '>':
                 canonic = filename
-            elif filename.startswith('Python expression'):
-                canonic = '<Python expression: %s>'%filename[:17]
             else:
+                # Should we deal with URL's here?
                 canonic = path.abspath(filename)
-
             self.fncache[filename] = canonic
         return canonic
 
-    def getFilenameAndLine(self, frame):
-        """Returns the filename and line number for the frame.
-        """
-        filename = self.canonic(frame.f_code.co_filename)
-        return filename, frame.f_lineno
-
-    def getFrameNames(self, frame):
-        """Returns the module and function name for the frame.
-        """
-        try:
-            modname = frame.f_globals['__name__']
-        except KeyError:
-            modname = ''
-        if modname is None:
-            modname = ''
-        funcname = frame.f_code.co_name
-        return modname, funcname
-
-    def isTraceable(self, frame):
-        return frame.f_globals.get('__traceable__', 1)
-
-    def break_here(self, frame):
-        filename, lineno = self.getFilenameAndLine(frame)
-        if not self.breaks.has_key(filename):
-            return 0
-
-        if not lineno in self.breaks[filename]:
-            return 0
-        # flag says ok to delete temp. bp
-        (bp, flag) = bdb.effective(filename, lineno, frame)
-        if bp:
-            self.currentbp = bp.number
-            if (flag and bp.temporary):
-                self.do_clear(str(bp.number))
-            self.afterBreakpoint(frame)
-            return 1
-        else:
-            return 0
-
-    def break_anywhere(self, frame):
-        filename, lineno = self.getFilenameAndLine(frame)
-        return self.breaks.has_key(filename)
-
     def stop_here(self, frame):
         # Redefine stopping.
-        if frame is self.botframe:
-            # Don't stop in the bottom frame.
+        # Note that stopframe is now a very odd variable:
+        #   None: Stop anywhere
+        #   frame object: Stop in that frame
+        #   (): Stop nowhere
+        if not self.stop_in_botframe and frame is self.botframe:
+            # Don't stop in botframe.
             return 0
         sf = self.stopframe
         if sf is None:
             # Stop anywhere.
-            return self.isTraceable(frame)
+            return 1
         elif sf is ():
             # Stop nowhere.
             return 0
-        # else stop in a specific frame.
-        if (frame is sf and frame.f_lineno != self.ignore_stopline):
+        if (frame is sf and
+            frame.f_lineno != self.ignore_stopline):
             # Stop in the current frame unless we're on
             # ignore_stopline.
-            return self.isTraceable(frame)
+            return 1
         # Stop at any frame that called stopframe.
         f = sf
         while f:
             if frame is f:
-                return self.isTraceable(frame)
+                return 1
             f = f.f_back
         return 0
 
-    def add_trace_hooks(self, frame):
-        root_frame = None
-        f = frame
-        td = self.trace_dispatch
-        while f:
-            f.f_trace = td
-            root_frame = f
-            f = f.f_back
-            if f is self.botframe:
-                break
-        if self.botframe is None:
-            # Make the entire stack visible.
-            self.botframe = root_frame
-
-    def remove_trace_hooks(self):
-        sys.settrace(None)
-        try:
-            raise Exception, 'gen_exc_info'
-        except:
-            frame = sys.exc_info()[2].tb_frame
-            while frame:
-                # Clear all the f_trace attributes
-                # that were created while processing with a
-                # settrace callback enabled.
-                del frame.f_trace
-                if frame is self.botframe:
-                    break
-                frame = frame.f_back
+    def break_anywhere(self, frame):
+        # Allow a stop anywhere, anytime.
+        # todo: Optimize by stopping only when in one of the
+        # files being debugged?  Problem: callbacks don't get debugged.
+        return 1
 
     def set_continue(self, full_speed=0):
-        """Only stop at breakpoints, exceptions or when finished.
-        """
+        # Don't stop except at breakpoints or when finished
+        #self.stopframe = self.botframe
         self.stopframe = ()
         self.returnframe = None
         self.quitting = 0
-
         if full_speed:
-            # run without debugger overhead
-            self.starting_trace = 0
-            self.remove_trace_hooks()
-        else:
-            self.starting_trace = 1
-
-        # Allow a stop in any thread.
-        self._lock.releaseIfOwned()
-
-    def set_disconnect(self):
-        """Debugging client disconnected.  Raise a quit exception in just
-        this thread, but allow other threads to continue.
-        """
-        self.set_continue(1)
-        raise BdbQuit, 'Client disconnected'
-
-    def set_traceable(self, enable=1):
-        """Allows user code to enable/disable tracing without changing the
-        stepping mode.
-        """
-        sys.settrace(None)
-        self._running = 1
-        if enable:
-            # Add trace hooks.
+            # no breakpoints; run without debugger overhead
+            sys.settrace(None)
             try:
-                raise Exception, 'gen_exc_info'
+                1 + ''  # raise an exception
             except:
                 frame = sys.exc_info()[2].tb_frame.f_back
-            self.add_trace_hooks(frame)
-            sys.settrace(self.trace_dispatch)
-        else:
-            # Remove trace hooks and allow other threads to capture the lock.
-            self.remove_trace_hooks()
-            self._lock.releaseIfOwned()
+                while frame and frame is not self.botframe:
+                    # Remove all the f_trace attributes
+                    # that were created while processing with a
+                    # settrace callback enabled.
+                    del frame.f_trace
+                    frame = frame.f_back
 
-    def hard_break_here(self, frame):
-        """Indicates whether the debugger should stop at a hard breakpoint.
-
-        Returns a (filename, lineno) tuple if the debugger should also
-        set a soft breakpoint.
-        """
-        filename, lineno = self.getFilenameAndLine(frame)
-        brks = self.breaks.get(filename, None)
-        if brks is None or lineno not in brks:
-            # No soft breakpoint has been set, so plan to add the soft
-            # breakpoint and stop.
-            return (filename, lineno)
-        # Let the soft breakpoint control whether the hard breakpoint
-        # takes effect.
-        return self.break_here(frame)
+    def runcall(self, func, *args, **kw):
+        self.reset()
+        sys.settrace(self.trace_dispatch)
+        res = None
+        try:
+            try:
+                res = apply(func, args, kw)
+            except BdbQuit:
+                pass
+        finally:
+            self.quitting = 1
+            sys.settrace(None)
+        return res
 
     def set_trace(self):
-        """Start debugging from the caller's frame.
-
-        Called by hard breakpoints.
-        """
+        # Start debugging from here
+        self._running = 1
+        # Note: we can't use Bdb.set_trace() because the
+        # exception trickery below would have to change [2] to [3].
         try:
-            raise Exception, 'gen_exc_info'
+            1 + ''
         except:
             frame = sys.exc_info()[2].tb_frame.f_back
-        stop = self.hard_break_here(frame)
-        if not stop:
-            # The user has disabled this breakpoint.
-            return
-        if not self._lock.acquire(0):
-            # The debugger is busy in another thread.
-            return
-
-        if isinstance(stop, TupleType):
-            # Add a soft breakpoint here so the user can manage the breakpoint.
-            filename, lineno = stop
-            self.set_break(filename, lineno)
-        self._running = 1
-        self.add_trace_hooks(frame)
-        # Get sys.settrace() called when resuming.
-        self.starting_trace = 1
-        self.afterBreakpoint(frame)
-        # Pause in the frame
-        self.user_line(frame)
-
-    def afterBreakpoint(self, frame):
-        # Set a default stepping mode.
+        self.reset()
+        while frame:
+            frame.f_trace = self.trace_dispatch
+            self.botframe = frame
+            frame = frame.f_back
         self.set_step()
+        sys.settrace(self.trace_dispatch)
 
     def set_internal_breakpoint(self, filename, lineno, temporary=0,
                                 cond=None):
@@ -732,12 +509,23 @@ class DebugServer (Bdb):
         if not lineno in list:
             list.append(lineno)
 
+    # A literal copy of Bdb.set_break() without the print statement
+    # at the end, returning the Breakpoint object.
     def set_break(self, filename, lineno, temporary=0, cond=None):
+        #orig_filename = filename
         filename = self.canonic(filename)
+        import linecache # Import as late as possible
+        line = linecache.getline(filename, lineno)
+        if not line:
+            # XXX
+            return 'That line does not exist!'
         self.set_internal_breakpoint(filename, lineno, temporary, cond)
-        # Note that we can't reliably verify a filename anymore.
-        return bdb.Breakpoint(filename, lineno, temporary, cond)
+        bp = bdb.Breakpoint(filename, lineno, temporary, cond)
+        # Save the original filename for passing back the stats.
+        #bp.orig_filename = orig_filename
+        return bp
 
+    # An oversight in bdb?
     def do_clear(self, bpno):
         self.clear_bpbynumber(bpno)
 
@@ -761,26 +549,28 @@ class DebugServer (Bdb):
 
     def user_line(self, frame):
         # This method is called when we stop or break at a line
-        if not self._lock.acquire(0):
-            # Already working in another thread.
-            return
         if self.autocont:
             self.autocont = 0
             self.set_continue()
             return
-        self.stopframe = ()  # Don't stop.
+##        elif self.ignore_first_frame:
+##            self.ignore_first_frame = 0
+##            self.ignore_frame = frame
+##            self.set_step()
+##            return
         self.ignore_stopline = -1
         self.frame = frame
         self.exc_info = None
-        filename, lineno = self.getFilenameAndLine(frame)
+        filename = frame.f_code.co_filename
+        lineno = frame.f_lineno
         self.clearTemporaryBreakpoints(filename, lineno)
-        self.eventLoop()
+        self.serverLoop()
 
     def user_return(self, frame, return_value):
-        # This method is called when stepping in or next,
-        # but not when stepping out.
-        frame.f_locals['__return__'] = return_value
-        self.user_line(frame)
+        # This method is called when a return trap is set here
+        # frame.f_locals['__return__'] = return_value
+        # self.interaction(frame, None)
+        pass
 
     def user_exception(self, frame, exc_info):
         # This method should be used to automatically stop
@@ -788,7 +578,7 @@ class DebugServer (Bdb):
         #self.ignore_stopline = -1
         #self.frame = frame
         #self.exc_info = exc_info
-        #self.eventLoop()
+        #self.serverLoop()
         pass
 
     ### Utility methods.
@@ -812,9 +602,9 @@ class DebugServer (Bdb):
             chdir(dn)
 
         self.autocont = autocont
+##        self.ignore_first_frame = 1
 
-        self.run("execfile(fn, d)", {
-            'fn':fn, 'd':d, '__debugger__': self})
+        self.run("execfile(fn, d)", {'fn':fn, 'd':d})
 
     def run(self, cmd, globals=None, locals=None):
         try:
@@ -823,68 +613,55 @@ class DebugServer (Bdb):
                 Bdb.run(self, cmd, globals, locals)
             except (BdbQuit, SystemExit):
                 pass
-            except:
+            except Exception, e:
+                # Provide post-mortem analysis.
                 import traceback
                 traceback.print_exc()
-                if self._lock.acquire(0):
-                    # Provide post-mortem analysis.
-                    self.exc_info = sys.exc_info()
-                    self.frame = self.exc_info[2].tb_frame
-                    self.quitting = 0
-                    self.eventLoop()
+                self.exc_info = sys.exc_info()
+                self.frame = self.exc_info[2].tb_frame
+                self.quitting = 0
+                self.serverLoop()
         finally:
-            sys.settrace(None)  # Just to be sure
+            self.quitting = 1
+            self._running = 0
+            self.cleanupServer()
+
+    def runFunc(self, func, *args, **kw):
+        try:
+            self._running = 1
+            try:
+                return apply(self.runcall, (func,) + args, kw)
+            except BdbQuit:
+                pass
+            except:
+                # Provide post-mortem analysis.
+                self.exc_info = sys.exc_info()
+                self.frame = self.exc_info[2].tb_frame
+                self.quitting = 0
+                self.serverLoop()
+        finally:
             self.quitting = 1
             self._running = 0
             self.cleanupServer()
 
     def isRunning(self):
         return self._running
-    
-    def post_mortem(self, exc_info=None):
-        if exc_info is None:
-            self.exc_info = sys.exc_info()
-        else:
-            self.exc_info = exc_info
-            
-        if self.exc_info[2] is not None:
-            self.frame = self.exc_info[2].tb_frame
-        else:
-            self.frame = None    
-
-        self._running = 1
-        self.quitting = 0
-        self.eventLoop()
 
     def set_step_out(self):
-        """Stop when returning from the topmost frame."""
-        frame = self.getFrameByNumber(-1)
-        if frame is not None:
-            self.stopframe = frame.f_back
-            self.returnframe = None
-            self.quitting = 0
+        # Stop when returning from the current frame.
+        if self.frame is not None:
+            self.set_return(self.frame)
         else:
             raise DebugError('No current frame')
 
     def set_step_over(self):
-        """Stop on the next line in the topmost frame or in one of its callers.
-        """
-        frame = self.getFrameByNumber(-1)
+        # Stop on the next line in the current frame or above.
+        frame = self.frame
         if frame is not None:
-            # ignore_stopline is brittle for scripts.
-            #self.ignore_stopline = frame.f_lineno
+            self.ignore_stopline = frame.f_lineno
             self.set_next(frame)
         else:
             raise DebugError('No current frame')
-        
-    def set_step_jump(self, lineno):
-        """ Adjust the linenumber attribute of the bottom frame """
-        frame = self.getFrameByNumber(-1)
-        if frame is not None:
-            frame.f_lineno = lineno
-        else:
-            raise DebugError('No current frame')
-    
 
     ### Breakpoint control.
     def setAllBreakpoints(self, brks):
@@ -892,21 +669,21 @@ class DebugServer (Bdb):
         filename, lineno, temporary, enabled, and cond.
         Non-blocking."""
         self.clear_all_breaks()
+        #print 'setting breakpoints:', brks
         if brks:
             for brk in brks:
-                self.addBreakpoint(**brk)
+                apply(self.addBreakpoint, (), brk)
 
     def addBreakpoint(self, filename, lineno, temporary=0,
-                      cond='', enabled=1, ignore=0):
+                      cond=None, enabled=1):
         """Sets a breakpoint.  Non-blocking.
         """
         bp = self.set_break(filename, lineno, temporary, cond)
         if type(bp) == type(''):
             # Note that checking for string type is strange. Argh.
-            raise BreakpointError(bp)
+            raise DebugError(bp)
         elif bp is not None and not enabled:
             bp.disable()
-        bp.ignore = ignore
 
     def enableBreakpoints(self, filename, lineno, enabled=1):
         """Sets the enabled flag for all breakpoints on a given line.
@@ -918,61 +695,12 @@ class DebugServer (Bdb):
                 if enabled: bp.enable()
                 else: bp.disable()
 
-    def ignoreBreakpoints(self, filename, lineno, ignore=0):
-        """Sets the ignore count for all breakpoints on a given line.
-        Non-blocking.
-        """
-        bps = self.get_breaks(filename, lineno)
-        if bps:
-            for bp in bps:
-                bp.ignore = ignore
-
-    def conditionalBreakpoints(self, filename, lineno, cond=''):
-        """Sets the break condition for all breakpoints on a given line.
-        Non-blocking.
-        """
-        bps = self.get_breaks(filename, lineno)
-        if bps:
-            for bp in bps:
-                bp.cond = cond
-
     def clearBreakpoints(self, filename, lineno):
-        """Clears all breakpoints on a line.
-        Non-blocking.
+        """Clears all breakpoints on a line.  Non-blocking.
         """
         msg = self.clear_break(filename, lineno)
         if msg is not None:
-            raise BreakpointError(msg)
-
-    def adjustBreakpoints(self, filename, lineno, delta):
-        """Moves all applicable breakpoints when delta lines are added or
-        deleted.
-        Non-blocking.
-        """
-        # This can be more efficient, but for now sticking to the bdb interface
-        # Unfortunately this must be done on a low level
-        filename = self.canonic(filename)
-        breaklines = self.get_file_breaks(filename)
-        bplist = bdb.Breakpoint.bplist
-        set_breaks = []
-        # store reference and remove from (fn, ln) refed dict.
-        for line in breaklines[:]:
-            if line > lineno:
-                set_breaks.append(self.get_breaks(filename, line))
-                breaklines.remove(line)
-                del bplist[filename, line]
-        # put old break at new place and renumber
-        for brks in set_breaks:
-            for brk in brks:
-                brk.line = brk.line + delta
-                breaklines.append(brk.line)
-                # merge in moved breaks
-                if bplist.has_key((filename, brk.line)):
-                    bplist[filename, brk.line].append(brk)
-                else:
-                    bplist[filename, brk.line] = [brk]
-        # reorder lines
-        breaklines.sort()
+            raise DebugError(msg)
 
     def getStackInfo(self):
         try:
@@ -985,49 +713,34 @@ class DebugServer (Bdb):
                     exc_type = "%s" % str(exc_type)
                 if exc_value is not None:
                     exc_value = str(exc_value)
-
                 stack, frame_stack_len = self.get_stack(
                     exc_tb.tb_frame, exc_tb)
+                if 0:
+                    # Remove the part before the exception handler.
+                    stack = stack[frame_stack_len + 1:]
+                    frame_stack_len = len(stack)
             else:
                 exc_type = None
                 exc_value = None
                 stack, frame_stack_len = self.get_stack(
                     self.frame, None)
-            # Remove debugger's own stack.
-            for index in range(len(stack)):
-                g = stack[index][0].f_globals
-                if g.get('__debugger__', None) is self:
-                    stack = stack[index + 1:]
-                    frame_stack_len = frame_stack_len - (index + 1)
-                    break
             return exc_type, exc_value, stack, frame_stack_len
         finally:
             exc_tb = None
             stack = None
 
-    def getFrameByNumber(self, frameno):
-        """Gets the specified frame number from the stack.
-
-        Returns None if the stack is not available.
-        """
+    def getQueryFrame(self, frameno):
         try:
             stack = self.getStackInfo()[2]
             if stack:
-                if frameno >= len(stack):
-                    # Should we be doing this?
-                    frameno = len(stack) - 1
-                return stack[frameno][0]
+                if frameno > len(stack):
+                    return stack[-1][0]
+                else:
+                    return stack[frameno][0]
             else:
                 return None
         finally:
             stack = None
-
-    def getFrameNamespaces(self, frame):
-        """Returns the locals and globals for a frame.
-
-        Can be overridden for high-level scripts.
-        """
-        return frame.f_globals, frame.f_locals
 
     def getExtendedFrameInfo(self):
         try:
@@ -1035,12 +748,16 @@ class DebugServer (Bdb):
              frame_stack_len) = self.getStackInfo()
             stack_summary = []
             for frame, lineno in stack:
-                filename, lineno = self.getFilenameAndLine(frame)
-                modname, funcname = self.getFrameNames(frame)
+                try:
+                    modname = frame.f_globals['__name__']
+                except:
+                    modname = ''
+                code = frame.f_code
+                filename = self.canonic(code.co_filename)
+                co_name = code.co_name
                 stack_summary.append(
                     {'filename':filename, 'lineno':lineno,
-                     'funcname':funcname, 'modname':modname})
-
+                     'funcname':co_name, 'modname':modname})
             result = {'stack':stack_summary,
                       'frame_stack_len':frame_stack_len,
                       'running':self._running and 1 or 0}
@@ -1057,6 +774,7 @@ class DebugServer (Bdb):
         rval = []
         for bps in bdb.Breakpoint.bplist.values():
             for bp in bps:
+                #filename = getattr(bp, 'orig_filename', bp.file)
                 filename = bp.file  # Already canonic
                 rval.append({'filename':filename,
                              'lineno':bp.line,
@@ -1064,12 +782,20 @@ class DebugServer (Bdb):
                              'temporary':bp.temporary and 1 or 0,
                              'enabled':bp.enabled and 1 or 0,
                              'hits':bp.hits or 0,
-                             'ignore':bp.ignore or 0,
+                             'ignore':bp.ignore and 1 or 0,
                              })
         return rval
 
     def getStatusSummary(self):
-        rval = self.getExtendedFrameInfo()
+        rval = {'stdout':self.stdoutbuf.getvalue(),
+                'stderr':self.stderrbuf.getvalue(),
+                }
+        self.stdoutbuf.seek(0)
+        self.stdoutbuf.truncate()
+        self.stderrbuf.seek(0)
+        self.stderrbuf.truncate()
+        info = self.getExtendedFrameInfo()
+        rval.update(info)
         rval['breaks'] = self.getBreakpointStats()
         return rval
 
@@ -1078,21 +804,21 @@ class DebugServer (Bdb):
             rname = 'locals'
         else:
             rname = 'globals'
-        frame = self.getFrameByNumber(frameno)
-        if frame is None:
+        query_frame = self.getQueryFrame(frameno)
+        if query_frame is None:
             return {'frameno':frameno, rname:{}}
-        globalsDict, localsDict = self.getFrameNamespaces(frame)
         if locals:
-            d = self.safeReprDict(localsDict)
+            d = self.safeReprDict(query_frame.f_locals)
         else:
-            d = self.safeReprDict(globalsDict)
+            d = self.safeReprDict(query_frame.f_globals)
         return {'frameno':frameno, rname:d}
 
     def evaluateWatches(self, exprs, frameno):
-        frame = self.getFrameByNumber(frameno)
-        if frame is None:
+        query_frame = self.getQueryFrame(frameno)
+        if query_frame is None:
             return {'frameno':frameno, 'watches':{}}
-        globalsDict, localsDict = self.getFrameNamespaces(frame)
+        localsDict = query_frame.f_locals
+        globalsDict = query_frame.f_globals
         rval = {}
         for info in exprs:
             name = info['name']
@@ -1115,10 +841,11 @@ class DebugServer (Bdb):
     def getWatchSubobjects(self, expr, frameno):
         """Returns a tuple containing the names of subobjects
         available through the given watch expression."""
-        frame = self.getFrameByNumber(frameno)
-        if frame is None:
+        query_frame = self.getQueryFrame(frameno)
+        if query_frame is None:
             return []
-        globalsDict, localsDict = self.getFrameNamespaces(frame)
+        localsDict = query_frame.f_locals
+        globalsDict = query_frame.f_globals
         try: inst_items = dir(eval(expr, globalsDict, localsDict))
         except: inst_items = []
         try: clss_items = dir(eval(expr, globalsDict, localsDict)
@@ -1126,39 +853,21 @@ class DebugServer (Bdb):
         except: clss_items = []
         return inst_items + clss_items
 
-    def pythonShell(self, code, globalsDict, localsDict, name='<debug>'):
-        from cStringIO import StringIO
-
-        _ts, sys.stdout = sys.stdout, StringIO('')
-        try:
-            co = compile(code, name, 'single')
-            exec co in globalsDict, localsDict
-            return sys.stdout.getvalue()
-# lame attempt at handling None values
-##            res = sys.stdout.getvalue()
-##            if not res:
-##                try:
-##                    if eval(co, globalsDict, localsDict) is None:
-##                        return 'None'
-##                except:
-##                    pass
-##            return res
-                    
-        finally:
-            sys.stdout = _ts
-
-    def pprintVarValue(self, expr, frameno):
-        frame = self.getFrameByNumber(frameno)
-        if frame is None:
-            return 'error: no current frame'
+    def pprintVarValue(self, name, frameno):
+        query_frame = self.getQueryFrame(frameno)
+        if query_frame is None:
+            return ''
         else:
             try:
-                globalsDict, localsDict = self.getFrameNamespaces(frame)
-                return self.pythonShell(expr, globalsDict, localsDict)
+                l = query_frame.f_locals
+                g = query_frame.f_globals
+                if l.has_key(name): d = l
+                elif g.has_key(name): d = g
+                else: return ''
+                return pprint.pformat(d[name])
             except:
                 t, v = sys.exc_info()[:2]
-                import traceback
-                return ''.join(traceback.format_exception_only(t, v))
+                return str(v)
 
     def safeRepr(self, s):
         return self.repr.repr(s)
@@ -1172,11 +881,16 @@ class DebugServer (Bdb):
             rval[str(key)] = self.safeRepr(value)
         return rval
 
-##    def updateBottomOfStackCodeObject(self, code):
-##        frame = self.getFrameByNumber(-1)
-##        if frame is not None:
-##            frame.f_lineno = lineno
-##            self.quitting = 0
-##        else:
-##            raise DebugError('No current frame')
-        
+
+waiting_debug_server = None
+
+def set_trace():
+    """Call this to set a 'hard' breakpoint.
+
+    Note that this starts debugging only if a debugger is currently
+    connected, which is most likely very useful."""
+    global waiting_debug_server
+    ds = waiting_debug_server
+    if ds:
+        waiting_debug_server = None
+        ds.set_trace()

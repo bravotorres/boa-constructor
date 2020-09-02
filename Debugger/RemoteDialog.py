@@ -1,182 +1,66 @@
 #Boa:Dialog:AttachDlg
 
-import pprint
-
-import wx
-import wx.grid
-
-from Utils import _
-
-from PathsPanel import PathsPanel
+from wxPython.wx import *
 
 def create(parent):
     return AttachDlg(parent)
 
-[wxID_ATTACHDLG, wxID_ATTACHDLGCANCEL_BUTTON, wxID_ATTACHDLGHELP_BUTTON, 
- wxID_ATTACHDLGHOST_CTRL, wxID_ATTACHDLGOK_BUTTON, 
- wxID_ATTACHDLGPASSWORD_CTRL, wxID_ATTACHDLGPATHSPANEL, 
- wxID_ATTACHDLGPORT_CTRL, wxID_ATTACHDLGREM_PASS_CTRL, 
- wxID_ATTACHDLGSTATICTEXT1, wxID_ATTACHDLGSTATICTEXT2, 
- wxID_ATTACHDLGSTATICTEXT3, wxID_ATTACHDLGSTATICTEXT4, 
- wxID_ATTACHDLGUSERNAME_CTRL, 
-] = [wx.NewId() for _init_ctrls in range(14)]
+[wxID_ATTACHDLGPORT_CTRL,
+ wxID_ATTACHDLGHOST_CTRL,
+ wxID_ATTACHDLGPASSWORD_CTRL,
+ wxID_ATTACHDLGUSERNAME_CTRL,
+ wxID_ATTACHDLGSTATICTEXT1,
+ wxID_ATTACHDLGSTATICTEXT3,
+ wxID_ATTACHDLGSTATICTEXT2,
+ wxID_ATTACHDLGHELP_BUTTON,
+ wxID_ATTACHDLGSTATICTEXT4,
+ wxID_ATTACHDLGCANCEL_BUTTON,
+ wxID_ATTACHDLGOK_BUTTON,
+ wxID_ATTACHDLG] = map(lambda _init_ctrls: wxNewId(), range(12))
 
-class AttachDlg(wx.Dialog):
-    _custom_classes = {'wx.Panel': ['PathsPanel'],}
-
-    rem_host = None
-    rem_port = None
-    rem_user = None
-    rem_pass = None
-    rem_pths = None
+class AttachDlg(wxDialog):
+    def _init_utils(self):
+        pass
 
     def _init_ctrls(self, prnt):
-        # generated method, don't edit
-        wx.Dialog.__init__(self, id=wxID_ATTACHDLG, name='AttachDlg',
-              parent=prnt, pos=wx.Point(270, 335), size=wx.Size(527, 391),
-              style=wx.DEFAULT_DIALOG_STYLE, title=_('Attach to debugger'))
-        self.SetClientSize(wx.Size(519, 364))
-        self.Bind(wx.EVT_CLOSE, self.OnCloseWindow)
+        wxDialog.__init__(self, size = wxSize(288, 227), id = wxID_ATTACHDLG, title = 'Attach to debugger', parent = prnt, name = 'AttachDlg', style = wxDEFAULT_DIALOG_STYLE, pos = wxPoint(344, 237))
+        self._init_utils()
+        EVT_CLOSE(self, self.OnCloseWindow)
 
-        self.staticText1 = wx.StaticText(id=wxID_ATTACHDLGSTATICTEXT1,
-              label=_('Host'), name='staticText1', parent=self, pos=wx.Point(16,
-              24), size=wx.Size(56, 16), style=0)
+        self.staticText1 = wxStaticText(label = 'Host', id = wxID_ATTACHDLGSTATICTEXT1, parent = self, name = 'staticText1', size = wxSize(56, 16), style = 0, pos = wxPoint(16, 24))
 
-        self.staticText2 = wx.StaticText(id=wxID_ATTACHDLGSTATICTEXT2,
-              label=_('Port'), name='staticText2', parent=self, pos=wx.Point(16,
-              56), size=wx.Size(56, 16), style=0)
+        self.staticText2 = wxStaticText(label = 'Port', id = wxID_ATTACHDLGSTATICTEXT2, parent = self, name = 'staticText2', size = wxSize(56, 16), style = 0, pos = wxPoint(16, 56))
 
-        self.staticText3 = wx.StaticText(id=wxID_ATTACHDLGSTATICTEXT3,
-              label=_('Username'), name='staticText3', parent=self,
-              pos=wx.Point(16, 88), size=wx.Size(56, 16), style=0)
+        self.staticText3 = wxStaticText(label = 'Username', id = wxID_ATTACHDLGSTATICTEXT3, parent = self, name = 'staticText3', size = wxSize(56, 16), style = 0, pos = wxPoint(16, 88))
 
-        self.staticText4 = wx.StaticText(id=wxID_ATTACHDLGSTATICTEXT4,
-              label=_('Password'), name='staticText4', parent=self,
-              pos=wx.Point(16, 120), size=wx.Size(56, 16), style=0)
+        self.staticText4 = wxStaticText(label = 'Password', id = wxID_ATTACHDLGSTATICTEXT4, parent = self, name = 'staticText4', size = wxSize(56, 16), style = 0, pos = wxPoint(16, 120))
 
-        self.host_ctrl = wx.TextCtrl(id=wxID_ATTACHDLGHOST_CTRL,
-              name='host_ctrl', parent=self, pos=wx.Point(80, 16),
-              size=wx.Size(160, 24), style=0, value=self.host)
+        self.host_ctrl = wxTextCtrl(size = wxSize(160, 24), value = 'localhost', pos = wxPoint(80, 16), parent = self, name = 'host_ctrl', style = 0, id = wxID_ATTACHDLGHOST_CTRL)
 
-        self.port_ctrl = wx.TextCtrl(id=wxID_ATTACHDLGPORT_CTRL,
-              name='port_ctrl', parent=self, pos=wx.Point(80, 48),
-              size=wx.Size(48, 24), style=0, value=self.port)
+        self.port_ctrl = wxTextCtrl(size = wxSize(48, 24), value = '8080', pos = wxPoint(80, 48), parent = self, name = 'port_ctrl', style = 0, id = wxID_ATTACHDLGPORT_CTRL)
 
-        self.username_ctrl = wx.TextCtrl(id=wxID_ATTACHDLGUSERNAME_CTRL,
-              name='username_ctrl', parent=self, pos=wx.Point(80, 80),
-              size=wx.Size(96, 24), style=0, value=self.user)
+        self.username_ctrl = wxTextCtrl(size = wxSize(96, 24), value = '', pos = wxPoint(80, 80), parent = self, name = 'username_ctrl', style = 0, id = wxID_ATTACHDLGUSERNAME_CTRL)
 
-        self.password_ctrl = wx.TextCtrl(id=wxID_ATTACHDLGPASSWORD_CTRL,
-              name='password_ctrl', parent=self, pos=wx.Point(80, 112),
-              size=wx.Size(96, 24), style=wx.TE_PASSWORD, value=self.pwd)
+        self.password_ctrl = wxTextCtrl(size = wxSize(96, 24), value = '', pos = wxPoint(80, 112), parent = self, name = 'password_ctrl', style = wxTE_PASSWORD, id = wxID_ATTACHDLGPASSWORD_CTRL)
 
-        self.ok_button = wx.Button(id=wxID_ATTACHDLGOK_BUTTON, label=_('OK'),
-              name='ok_button', parent=self, pos=wx.Point(266, 323),
-              size=wx.Size(72, 24), style=0)
-        self.ok_button.Bind(wx.EVT_BUTTON, self.OnOkButton,
-              id=wxID_ATTACHDLGOK_BUTTON)
+        self.ok_button = wxButton(label = 'Ok', id = wxID_ATTACHDLGOK_BUTTON, parent = self, name = 'ok_button', size = wxSize(72, 24), style = 0, pos = wxPoint(24, 160))
+        EVT_BUTTON(self.ok_button, wxID_ATTACHDLGOK_BUTTON, self.OnOkButton)
 
-        self.cancel_button = wx.Button(id=wx.ID_CANCEL, label=_('Cancel'),
-              name='cancel_button', parent=self, pos=wx.Point(346, 323),
-              size=wx.Size(72, 24), style=0)
+        self.cancel_button = wxButton(label = 'Cancel', id = wxID_ATTACHDLGCANCEL_BUTTON, parent = self, name = 'cancel_button', size = wxSize(72, 24), style = 0, pos = wxPoint(104, 160))
+        EVT_BUTTON(self.cancel_button, wxID_ATTACHDLGCANCEL_BUTTON, self.OnCancelButton)
 
-        self.help_button = wx.Button(id=wxID_ATTACHDLGHELP_BUTTON, label=_('Help'),
-              name='help_button', parent=self, pos=wx.Point(426, 323),
-              size=wx.Size(72, 24), style=0)
-        self.help_button.Bind(wx.EVT_BUTTON, self.OnHelpButton,
-              id=wxID_ATTACHDLGHELP_BUTTON)
-
-        self.rem_pass_ctrl = wx.CheckBox(id=wxID_ATTACHDLGREM_PASS_CTRL,
-              label=_('Remember'), name='rem_pass_ctrl', parent=self,
-              pos=wx.Point(184, 120), size=wx.Size(73, 13), style=0)
-        self.rem_pass_ctrl.SetValue(False)
-
-        self.pathsPanel = PathsPanel(id=wxID_ATTACHDLGPATHSPANEL,
-              name='pathsPanel', parent=self, pos=wx.Point(8, 144),
-              size=wx.Size(504, 168), style=wx.TAB_TRAVERSAL)
+        self.help_button = wxButton(label = 'Help', id = wxID_ATTACHDLGHELP_BUTTON, parent = self, name = 'help_button', size = wxSize(72, 24), style = 0, pos = wxPoint(184, 160))
+        EVT_BUTTON(self.help_button, wxID_ATTACHDLGHELP_BUTTON, self.OnHelpButton)
 
     def __init__(self, editor):
-        import Utils
-        conf = Utils.createAndReadConfig('Explorer')
-        self.writeConfig = Utils.writeConfig
-
-        if conf and conf.has_section('debugger.remote'):
-            host = conf.get('debugger.remote', 'host')
-            port = conf.get('debugger.remote', 'port')
-            user = conf.get('debugger.remote', 'user')
-            pwd = eval(conf.get('debugger.remote', 'passwd'))
-            if pwd is not None:
-                from Explorers import scrm
-                pwd = scrm.scramble(pwd)
-            paths = eval(conf.get('debugger.remote', 'paths'))
-        else:
-            host, port, user, pwd, paths = self.rem_host, self.rem_port, \
-                  self.rem_user, self.rem_pass, self.rem_pths
-        self.conf = conf
-
-        self.host = '127.0.0.1'
-        if host is not None: self.host = host
-
-        self.port = '26200'
-        if port is not None: self.port = port
-
-        self.user = ''
-        if user is not None: self.user = user
-
-        self.pwd = ''
-        if pwd is not None: self.pwd = pwd
-
-        self.paths = []
-        if paths is not None: self.paths[:] = paths
-
         self._init_ctrls(editor)
         self.editor = editor
 
-        self.pathsPanel.init_paths(self.paths)
-
-        self.Center(wx.BOTH)
-
-        try:
-            from Preferences import IS
-            self.SetIcon(IS.load('Images/Icons/Debug.ico'))
-        except Exception:#ImportError: # for testing standalone
-            pass
-
     def OnOkButton(self, event):
-        paths = self.pathsPanel.read_paths()
-
         host = self.host_ctrl.GetValue()
         port = self.port_ctrl.GetValue()
         user = self.username_ctrl.GetValue()
         pw = self.password_ctrl.GetValue()
-
-        if __name__ == '__main__':
-            self.EndModal(wx.OK)
-            return
-
-        if self.conf:
-            if not self.conf.has_section('debugger.remote'):
-                self.conf.add_section('debugger.remote')
-            self.conf.set('debugger.remote', 'host', host)
-            self.conf.set('debugger.remote', 'port', port)
-            self.conf.set('debugger.remote', 'user', user)
-            if self.rem_pass_ctrl.GetValue():
-                from Explorers import scrm
-                self.conf.set('debugger.remote', 'passwd', repr(scrm.scramble(pw)))
-            else:
-                self.conf.set('debugger.remote', 'passwd', 'None')
-            self.conf.set('debugger.remote', 'paths', pprint.pformat(paths))
-
-            self.writeConfig(self.conf)
-        else:
-            AttachDlg.rem_host = host
-            AttachDlg.rem_port = port
-            AttachDlg.rem_user = user
-            if self.rem_pass_ctrl.GetValue():
-                AttachDlg.rem_pass = pw
-            else:
-                AttachDlg.rem_pass = None
-            AttachDlg.rem_pths = paths
 
         from Debugger import DebuggerFrame
         from RemoteClient import RemoteClient
@@ -184,17 +68,18 @@ class AttachDlg(wx.Dialog):
         debugger = DebuggerFrame(self.editor, slave_mode=0)
         client = RemoteClient(debugger, host, port, user, pw)
         debugger.setDebugClient(client)
-        debugger.setServerClientPaths(paths)
         if user:
             debugger.setTitleInfo('%s@%s:%s' % (user, host, port))
         else:
             debugger.setTitleInfo('%s:%s' % (host, port))
 
         self.editor.debugger = debugger
-        debugger.doDebugStep()
-        debugger.Show(True)
+        debugger.Show(true)
+        debugger.requestDebuggerStatus()
+        self.Close()
 
-        self.EndModal(wx.OK)
+    def OnCancelButton(self, event):
+        self.Close()
 
     def OnHelpButton(self, event):
         pass
@@ -203,27 +88,3 @@ class AttachDlg(wx.Dialog):
         self.editor = None
         self.Destroy()
         event.Skip()
-
-#-------------------------------------------------------------------------------
-
-if __name__ == '__main__':
-    import sys; sys.path.append('..')
-    app = wx.PySimpleApp()
-
-    dlg = create(None)
-    try:
-        dlg.ShowModal()
-        print dlg.pathsPanel.read_paths()
-    finally:
-        dlg.Destroy()
-
-    app.MainLoop()
-
-    dlg = create(None)
-    try:
-        dlg.ShowModal()
-        print dlg.pathsPanel.read_paths()
-    finally:
-        dlg.Destroy()
-
-    app.MainLoop()
